@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestRunMain(t *testing.T) {
@@ -24,9 +26,9 @@ func TestRunMain(t *testing.T) {
 
 			var out, errOut bytes.Buffer
 
-			if got := runMain(context.Background(), &out, &errOut, tc.args); got != tc.wantCode {
-				t.Errorf("runMain() = %d, want %d (stderr: %q)", got, tc.wantCode, errOut.String())
-			}
+			got := runMain(context.Background(), &out, &errOut, tc.args)
+
+			assert.Equal(t, tc.wantCode, got, "stderr: %s", errOut.String())
 		})
 	}
 }

@@ -3,9 +3,10 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"errors"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRun(t *testing.T) {
@@ -55,19 +56,17 @@ func TestRun(t *testing.T) {
 			err := Run(context.Background(), &out, &errOut, tc.args)
 
 			if tc.wantErr != nil {
-				if !errors.Is(err, tc.wantErr) {
-					t.Fatalf("Run() error = %v, want %v", err, tc.wantErr)
-				}
-			} else if err != nil {
-				t.Fatalf("Run() unexpected error: %v", err)
+				require.ErrorIs(t, err, tc.wantErr)
+			} else {
+				require.NoError(t, err)
 			}
 
-			if tc.wantErrOut != "" && !strings.Contains(errOut.String(), tc.wantErrOut) {
-				t.Errorf("stderr = %q, want it to contain %q", errOut.String(), tc.wantErrOut)
+			if tc.wantErrOut != "" {
+				assert.Contains(t, errOut.String(), tc.wantErrOut)
 			}
 
-			if tc.wantOutEmpt && out.Len() != 0 {
-				t.Errorf("stdout = %q, want empty", out.String())
+			if tc.wantOutEmpt {
+				assert.Empty(t, out.String())
 			}
 		})
 	}
@@ -81,29 +80,18 @@ func TestRunUsageStaysOffStdout(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 
-	if err := Run(context.Background(), &out, &errOut, []string{"help"}); !errors.Is(err, ErrUsage) {
-		t.Fatalf("Run() error = %v, want ErrUsage", err)
-	}
+	err := Run(context.Background(), &out, &errOut, []string{"help"})
 
-	if out.Len() != 0 {
-		t.Errorf("stdout = %q, want empty", out.String())
-	}
-
-	if errOut.Len() == 0 {
-		t.Error("stderr is empty, want usage text")
-	}
+	require.ErrorIs(t, err, ErrUsage)
+	assert.Empty(t, out.String(), "stdout must carry only pipeline output")
+	assert.NotEmpty(t, errOut.String(), "usage text must go to stderr")
 }
 
 func TestCommandsRegistryKeysMatchNames(t *testing.T) {
 	t.Parallel()
 
 	for key, c := range commands() {
-		if key != c.Name() {
-			t.Errorf("registry key %q != command Name() %q", key, c.Name())
-		}
-
-		if c.Description() == "" {
-			t.Errorf("command %q has an empty Description", key)
-		}
+		assert.Equal(t, key, c.Name(), "registry key must match command Name()")
+		assert.NotEmpty(t, c.Description(), "command %q needs a Description", key)
 	}
 }
