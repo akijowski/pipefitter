@@ -8,5 +8,23 @@ devenv.local.yaml
 
 # pre-commit
 .pre-commit-config.yaml
+
 # Added by goreleaser init:
 dist/
+
+# Go build output
+/pipefitter
+*.test
+*.out
+
+# JetBrains (IntelliJ IDEA, GoLand)
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
