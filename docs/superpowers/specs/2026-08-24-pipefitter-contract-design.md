@@ -508,10 +508,51 @@ That is meaningfully more code than map merging, and RFC 7396 is defined over
 plain JSON-ish data. So this is a possible refactor of the merge layer, not a
 cheap template function. Recording it honestly.
 
-**Agent functions.** These do I/O during render, which breaks the current
-property that stages 1-5 are pure. Rendering becomes fallible in a new way, and
-the agent is genuinely unreachable when running locally — which is what answer
-files address.
+**Agent functions.** Design decided ahead of implementation, so the seam is
+right the first time.
+
+Template functions call the agent **lazily during render**, consul-template
+style, rather than resolving into `.Agent.*` in a stage before rendering. Two
+alternatives were considered and rejected:
+
+- **Declared prerequisites** (a bundle lists the keys it needs, fetched before
+  render). Rejected: declaring a dependency separately from using it means the
+  two drift, and it over-fetches — every declared key is pulled even on a branch
+  that never runs.
+- **Two-pass discovery** (render with a recording stub, fetch, render for real).
+  This is what consul-template actually does internally, but it exists there to
+  serve a long-lived process watching for change. Pipefitter runs once and
+  exits. It also has a sharp edge: when a conditional depends on agent data,
+  pass one may not discover keys inside the branch it did not take, so it needs
+  loop-until-stable. Real complexity for no gain here.
+
+Lazy calls mean `render` is no longer pure in the strict sense, but the property
+that actually matters is preserved: the client is **injected**, not ambient, so
+`Render` stays deterministic given its inputs and tests pass a fake.
+
+Two requirements on the implementation:
+
+1. **Memoize.** A template referencing the same meta-data key from three steps
+   is the normal case, not an edge case. The wrapper caches per key, so repeated
+   lookups hit the agent once. This recovers the main efficiency argument that
+   favored prefetching.
+2. **Record.** Keep a log of every key fetched and its value, so agent data gets
+   the same introspection story as values provenance — you can see exactly what
+   was pulled and what it resolved to.
+
+Rendering gains a new failure mode: agent unreachable. **Errors must name the
+key**, not just the transport, or debugging is miserable. Outside CI the agent
+is genuinely absent, so the default implementation fails with guidance — which
+is what answer files address.
+
+The interface and its no-op implementation land in v1 even though no function
+uses them yet, because adding a parameter later churns every call site:
+
+```go
+type AgentClient interface {
+	MetaData(ctx context.Context, key string) (string, bool, error)
+}
+```
 
 ## New dependencies
 

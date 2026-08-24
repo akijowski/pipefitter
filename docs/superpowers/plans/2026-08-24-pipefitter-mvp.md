@@ -38,8 +38,13 @@ dependencies and are tested against the RFC's own cases.
 
 **Deferred to phase 2+ (all additive, seams per the spec):** go-getter remote
 resolution, `pipefitter values` (provenance is *recorded* in MVP, just not
-surfaced), `--output`, `--log-file`, `--verbose`, `AgentClient`, schema
-validation, comment preservation.
+surfaced), `--output`, `--log-file`, `--verbose`, agent-backed template
+functions, schema validation, comment preservation.
+
+**Present in MVP but unused:** the `render.AgentClient` interface and
+`render.NoAgent`, plus the `agent` parameter on `render.Render`. No template
+function calls it yet. Carrying the parameter now costs one unused argument;
+adding it later would churn every call site and test.
 
 **One deliberate refinement to the spec:** duplicate-step-key detection lives in
 `pipeline.Merge` rather than in the validation rule set, because that is the only
@@ -55,7 +60,7 @@ bundles) is preserved.
 | `internal/values/values_test.go` | RFC appendix cases, provenance |
 | `internal/bkenv/bkenv.go` | `map[string]string` → typed `Env` |
 | `internal/bkenv/bkenv_test.go` | field mapping, `PULL_REQUEST=false` |
-| `internal/render/render.go` | `Context`, `FuncMap`, `Render` |
+| `internal/render/render.go` | `Context`, `FuncMap`, `Render`, `AgentClient` |
 | `internal/render/render_test.go` | rendering, helpers, excluded funcs |
 | `internal/pipeline/pipeline.go` | `Document`, `Parse`, `Merge`, `Marshal` |
 | `internal/pipeline/pipeline_test.go` | concat/merge rules, dup keys |
@@ -497,6 +502,7 @@ go mod tidy
 package render
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -567,7 +573,7 @@ func TestRender(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := Render(tc.tmpls, tc.entry, tc.ctx)
+			got, err := Render(tc.tmpls, tc.entry, tc.ctx, NoAgent{})
 
 			if tc.wantErr != "" {
 				require.Error(t, err)
@@ -580,6 +586,17 @@ func TestRender(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestNoAgentErrorsWithGuidance(t *testing.T) {
+	t.Parallel()
+
+	_, found, err := NoAgent{}.MetaData(context.Background(), "deploy-target")
+
+	assert.False(t, found)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deploy-target",
+		"the error must name the key, or debugging is miserable")
 }
 ```
 
@@ -595,16 +612,31 @@ type Context struct {
 	Values map[string]any
 	Env    bkenv.Env
 }
+
+// AgentClient is the seam for buildkite-agent I/O during render. MVP registers
+// no functions that use it, but the parameter exists from the start so adding
+// them later does not churn every call site and test.
+type AgentClient interface {
+	MetaData(ctx context.Context, key string) (string, bool, error)
+}
+
+// NoAgent is the default outside CI: every lookup fails with guidance.
+type NoAgent struct{}
+
+func (NoAgent) MetaData(_ context.Context, key string) (string, bool, error) {
+	return "", false, fmt.Errorf("no buildkite-agent available for meta-data key %q", key)
+}
 ```
 
 `FuncMap()` starts from `sprig.TxtFuncMap()` and **deletes** `env`,
 `expandenv`, `getHostByName`, `uuidv4`, and the `rand*` family. Deleting rather
 than shadowing is what makes the "not available" cases fail at parse time.
 
-`Render(tmpls map[string]string, entry string, ctx Context) (string, error)`
+`Render(tmpls map[string]string, entry string, ctx Context, agent AgentClient) (string, error)`
 parses every entry in `tmpls` into one template set (so `define` blocks in
 helpers are visible), then executes `entry`. Parse template names in sorted
-order for determinism.
+order for determinism. `agent` is accepted and stored but unused in MVP — do
+**not** register any agent-backed template functions yet.
 
 - [ ] **Step 5 [A/C]: Run it green**
 
@@ -1214,9 +1246,10 @@ Add `generateCmd` satisfying the existing `command` interface, registered in
 1. `source.LoadDir(os.DirFS("."), dir)`
 2. `vals := values.Values{}`; merge `bundle.Defaults` with source label
    `"<name> defaults"`, then each `--values` file in order
-3. for each `bundle.TemplateNames()`: `render.Render(tmpls, name, ctx)`, where
-   `tmpls` is `bundle.Templates` and `bundle.Helpers` combined into one map so
-   `define` blocks resolve
+3. for each `bundle.TemplateNames()`:
+   `render.Render(tmpls, name, ctx, render.NoAgent{})`, where `tmpls` is
+   `bundle.Templates` and `bundle.Helpers` combined into one map so `define`
+   blocks resolve
 4. `pipeline.Parse` each rendered document into a `pipeline.Source` named
    `"<bundle>/<template>"`
 
