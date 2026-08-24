@@ -355,7 +355,7 @@ merge in the order given.
 | ----------------- | ---------- | -------------------------------------------------------------------- |
 | `--values`, `-f`  | all three  | values file; repeatable, layered left-to-right                       |
 | `--output`, `-o`  | `generate` | write to file instead of stdout; `-` means stdout (default)          |
-| `--verbose`, `-v` | all        | debug level and above; default is errors only                        |
+| `--verbose`, `-v` | all        | debug level and above; default is warn and above                     |
 | `--log-file`      | all        | tee log output to this file in addition to stderr                    |
 
 **`--values` replaces auto-discovery.** Passing any `--values` disables
@@ -376,9 +376,25 @@ handler whose level comes from `--verbose` and whose writer is `os.Stderr` or
 `io.MultiWriter(os.Stderr, logFile)`. Constructed in `main` from parsed flags,
 which keeps `Env`'s writers the only I/O the packages see.
 
-Known consequence: **warnings are invisible by default.** Acceptable now since
-nothing emits them. If validation later grows non-fatal warnings, they belong in
-`validate`'s output, not in log lines.
+| Mode              | Level             |
+| ----------------- | ----------------- |
+| default           | `warn` and above  |
+| `--verbose`, `-v` | `debug` and above |
+
+**Default is `warn`, not `error`.** A successful run stays silent — nothing
+should emit a warning on the happy path — so the tool is still quiet in normal
+use. But warn-by-default means genuinely noisy conditions surface without
+needing a flag: a source resolved from a mutable ref, a values key that no
+template reads, a deprecated template function. Errors-only would hide exactly
+the class of problem that is easiest to fix and hardest to notice.
+
+The corollary is a standard to hold to: **a warning must be actionable.**
+Anything logged at warn on a normal successful run is a bug in pipefitter, not
+in the user's pipeline, because it trains people to ignore the channel.
+
+Non-fatal findings from validation are a separate matter — those belong in
+`validate`'s own output, not in log lines, since they are results rather than
+diagnostics.
 
 ### Exit codes
 
