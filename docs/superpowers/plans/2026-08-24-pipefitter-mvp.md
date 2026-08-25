@@ -262,11 +262,41 @@ git commit -m "feat(values): RFC 7396 merge patch semantics"
 
 ---
 
-## Task 3: Merge provenance
+## Task 3: Merge provenance and a depth limit
 
 **Files:**
 - Modify: `internal/values/values.go`
 - Test: `internal/values/values_test.go`
+- Test: `internal/values/mergepatch_test.go`
+
+Two changes that both land in `Merge`, hence one task.
+
+**Design decisions settled before starting:**
+
+1. **`mergePatch` stays focused on merging one target and one patch value.** It
+   does not learn about paths or provenance. It recurses over *values* and has no
+   idea where it is in the tree, so origin recording belongs in `Merge`, which
+   walks the patch separately for that purpose. This keeps the RFC core pure.
+2. **`Merge` gains an error return:** `Merge(base, patch, source) (Values, error)`.
+   Forced by the depth limit — `mergePatch` returns `any` and has nowhere to put
+   an error. Silently clamping was rejected: it would emit a subtly wrong
+   pipeline with no warning, which is the silent-empty failure mode the spec
+   rejects everywhere else. Task 10's fold becomes `if err != nil`.
+3. **`Origins` must be copied, not shared.** `Merge` currently does
+   `Values{Origins: base.Origins}`, handing back the caller's map by reference.
+   This task writes to it. Unlike the tree, `Origin` is a value struct, so a
+   shallow `maps.Copy` is a genuine copy here.
+
+**Why the depth limit, recorded so it is not mistaken for paranoia:** stack
+overflow in Go is a *fatal error*, not a recoverable panic — `recover()` cannot
+catch it. So the recursion must bound itself; there is no defending at the call
+site afterwards. Depth is normally bounded by YAML nesting (real configs are
+under ten levels) and the parser recurses before we do, but two cases defeat
+that: YAML aliases that reference an ancestor can produce a **self-referential
+structure**, against which depth is the only available guard, and phase 2's
+remote bundles mean `values.yaml` is no longer always first-party content.
+
+A limit of 64 is far beyond any real config and fails fast.
 
 - [ ] **Step 1 [C]: Write the failing test**
 
@@ -325,7 +355,10 @@ func TestMergeOrigins(t *testing.T) {
 
 			got := Values{}
 			for _, l := range tc.layers {
-				got = Merge(got, l.patch, l.source)
+				var err error
+
+				got, err = Merge(got, l.patch, l.source)
+				require.NoError(t, err)
 			}
 
 			assert.Equal(t, tc.want, got.Origins)
@@ -334,16 +367,101 @@ func TestMergeOrigins(t *testing.T) {
 }
 ```
 
+Also add a depth-limit test. `nest` builds a patch deeper than the limit
+without hand-writing it:
+
+```go
+// nest returns a patch nested depth levels deep: {"k":{"k":{...:"leaf"}}}.
+func nest(depth int) map[string]any {
+	out := map[string]any{"k": "leaf"}
+	for range depth {
+		out = map[string]any{"k": out}
+	}
+
+	return out
+}
+
+func TestMergeDepthLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		depth   int
+		wantErr bool
+	}{
+		"a realistic depth is fine":     {depth: 8},
+		"just under the limit is fine":  {depth: maxDepth - 2},
+		"beyond the limit is an error":  {depth: maxDepth + 5, wantErr: true},
+		"far beyond the limit is an error": {depth: maxDepth * 10, wantErr: true},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := Merge(Values{}, nest(tc.depth), "deep.yaml")
+
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "depth",
+					"the error must say what went wrong")
+
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}
+
+// TestMergeCyclicPatchDoesNotCrash is the case the limit exists for: a
+// self-referential tree, which YAML aliases can produce. Without a depth limit
+// this is a fatal stack overflow that recover() cannot catch.
+func TestMergeCyclicPatchDoesNotCrash(t *testing.T) {
+	t.Parallel()
+
+	cyclic := map[string]any{}
+	cyclic["self"] = cyclic
+
+	_, err := Merge(Values{}, cyclic, "cyclic.yaml")
+
+	require.Error(t, err)
+}
+```
+
 - [ ] **Step 2 [C]: Run it red**
 
-Run: `go test ./internal/values/ -run TestMergeOrigins -v`
-Expected: FAIL — origins empty or nil.
+Run: `go test ./internal/values/ -run 'TestMergeOrigins|TestMergeDepth|TestMergeCyclic' -v`
+Expected: FAIL to compile — `Merge` returns one value, `maxDepth` undefined.
 
 - [ ] **Step 3 [A]: Implement**
 
-Record `Origins[dottedPath] = Origin{Source: source}` for each scalar leaf
-written, and `Origin{Source: source, Deleted: true}` when a key is deleted.
-Only leaves get entries — intermediate maps do not.
+Three changes:
+
+1. **Origins.** Record `Origins[dottedPath] = Origin{Source: source}` for each
+   scalar leaf written, and `Origin{Source: source, Deleted: true}` when a key is
+   deleted. Only leaves get entries — intermediate maps do not. `Merge` walks the
+   patch to do this; `mergePatch` stays unaware of paths.
+2. **Copy Origins forward** rather than sharing `base.Origins` by reference.
+3. **Depth limit.** `const maxDepth = 64`. Thread a depth through `mergePatch`
+   and stop when it is exceeded. Since `mergePatch` returns `any`, the usual
+   options are a sentinel error value it can return, or having it report depth
+   back to `Merge`; either way `Merge` converts it into the returned error. The
+   error must mention depth and be actionable.
+
+Note the cyclic test passes as soon as the depth limit works — a cycle simply
+exceeds any finite depth.
+
+**Existing call sites must be updated in this task**, since both signatures
+change:
+
+- `internal/values/values_test.go` — every `Merge(...)` call in
+  `TestMergeRFC7396`, `TestMergeDoesNotMutateBase`, `TestMergeDoesNotMutatePatch`
+  and `TestMergeZeroValueIsUsable` now returns two values.
+- `internal/values/mergepatch_test.go` — every `mergePatch(...)` call, if the
+  depth parameter is threaded through its exported-to-the-package signature. If
+  you would rather keep those 19 tests untouched, have `mergePatch` keep its
+  two-argument form and delegate to an unexported `mergePatchAt(target, patch,
+  depth)`; the tests then keep calling the shallow wrapper.
 
 - [ ] **Step 4 [A/C]: Run it green**
 
@@ -748,6 +866,13 @@ Expected: FAIL — `undefined: Document`, `Parse`, `Marshal`.
 `type Document map[string]any`. `Parse` unmarshals into a `Document` and returns
 an error if the document is not a mapping. An empty input yields an empty
 non-nil `Document`. `Marshal` serializes with `goccy/go-yaml`.
+
+**Also check, and record in the spec, what limits `goccy/go-yaml` enforces on
+alias expansion and nesting depth.** Anchor expansion is the "billion laughs"
+class of bomb and it is a parse-layer concern, not something the merge depth
+limit from Task 3 defends against — by the time we merge, expansion has already
+happened. If goccy has no limit, note it as a known gap rather than assuming
+safety, since phase 2 fetches bundles from remote sources.
 
 - [ ] **Step 5 [A/C]: Run it green**
 
@@ -1287,6 +1412,9 @@ func templateSet(b source.Bundle) map[string]string {
 
 `environMap` is the one place the real environment is read, which keeps every
 package below `cmd` testable with plain maps.
+
+`values.Merge` returns an error (Task 3), so the fold is
+`vals, err = values.Merge(vals, patch, label)` with `if err != nil { return err }`.
 
 Then across all sources: `pipeline.Merge`, `validate.Run` (any findings → error),
 `pipeline.Marshal`, and only then write to `out`.
