@@ -68,9 +68,20 @@ just lint    # Run golangci-lint
 Two workflows run automatically:
 
 ### `ci.yml` (push/PR to main)
-- **Test** — runs `just test`
-- **Lint** — runs `just lint`
-- **Build** — runs `just build` (via GoReleaser snapshot)
+
+Three independent jobs, so a lint failure does not hide a test failure:
+
+- **Test** — `gofmt -s` check, `go vet`, then `go test -race ./...`
+- **Lint** — `golangci-lint` at the version pinned in the workflow, configured by
+  `.golangci.yml`
+- **Build** — GoReleaser snapshot build
+
+CI calls the Go toolchain directly rather than going through `just`. The Justfile
+stays the convenience layer for local development; CI uses the official pinned
+actions for lint and build so there is no third tool to install and keep current.
+
+Go's version comes from `go-version-file: go.mod`, so CI cannot drift from the
+module's declared version.
 
 ### `release.yml` (on tag push `v*`)
 - **Validate** — runs `goreleaser check`
@@ -79,8 +90,8 @@ Two workflows run automatically:
 Actions are pinned to commit hashes for supply-chain security:
 - `actions/checkout@11d5960a` (v4)
 - `actions/setup-go@40f1582b` (v5)
-- `goreleaser/goreleaser-action@7ec5c2b0` (latest)
-- Just installed from official release tarball
+- `golangci/golangci-lint-action@ba0d7d2e` (v9.3.0)
+- `goreleaser/goreleaser-action@f06c13b6` (v7.2.3)
 
 ## Releases
 

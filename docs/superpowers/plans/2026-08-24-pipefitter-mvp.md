@@ -1727,6 +1727,32 @@ Description and add a Usage section covering: the bundle layout, `generate` and
 `.Values`/`.Env` namespaces, RFC 7396 merge semantics with the empty-YAML-value
 `null` sharp edge, and output normalization (comments do not survive).
 
+**Missing keys need their own documented section — behavior, reasoning, and a
+worked example.** Templates render with `missingkey=error`, so reading a key that
+is absent fails the render rather than emitting anything. Document:
+
+- **Behavior.** Any absent key in `.Values` or `.Env.Vars` is an error naming the
+  key. A bundle must declare every key its templates read in its `values.yaml`,
+  even as `null` — that file is the bundle's documented interface, as in Helm.
+- **Reasoning.** Without it, `text/template` emits the literal string
+  `<no value>`. That is *valid YAML*, so `tag: {{ .Values.nope }}` would produce
+  `tag: <no value>` and ship a real string of that name to Buildkite. A failed
+  render is strictly better than a silently wrong pipeline. Note also that
+  `missingkey=zero` does not help: the zero value of `any` is a nil interface,
+  which still prints as `<no value>`, so it only benefits typed maps.
+- **The consequence for `default`.** `{{ .Values.x | default "fallback" }}`
+  covers a key that is *present but empty*. It cannot cover an absent key,
+  because the map index is evaluated before the pipe and fails first. Show both:
+
+  ```yaml
+  # values.yaml — declares the interface, empty is fine
+  queue:
+  ```
+  ```
+  {{ .Values.queue | default "default-queue" }}   # works: present but empty
+  {{ .Values.notDeclared | default "x" }}         # errors: no entry for key
+  ```
+
 - [ ] **Step 2 [A]: Commit**
 
 ```bash

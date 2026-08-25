@@ -1,0 +1,23 @@
+# golangci-lint configuration.
+#
+# Checked in so that a local run and CI agree: devenv does not pin a
+# golangci-lint version, and CI pins one explicitly in .github/workflows/ci.yml.
+# Keep those two in step when bumping.
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      # Writing usage and diagnostic text to a writer cannot fail usefully:
+      # there is nowhere to report it to, and the process is already on its way
+      # out. Checking these would mean threading an error out of every help
+      # path for no behavioral gain.
+      #
+      # This exclusion is only for output the user is *told* about. Writes that
+      # carry the actual pipeline document stay checked, since a truncated
+      # pipeline must not look like a successful one.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*text/tabwriter.Writer).Flush
