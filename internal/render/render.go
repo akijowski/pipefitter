@@ -80,7 +80,7 @@ func FuncMap() template.FuncMap {
 }
 
 // Render parses every template in tmpls as one set and executes entry against
-// renderCtx, returning the rendered text.
+// renderCtx, returning the rendered bytes ready for pipeline.Parse.
 //
 // All of tmpls is parsed, not just entry, so {{ define }} blocks in helper files
 // are visible. Names are parsed in sorted order, which only matters when two
@@ -94,7 +94,7 @@ func FuncMap() template.FuncMap {
 // its templates read in values.yaml. Note the consequence for sprig's default:
 // it covers a key that is present but empty, not one that is absent, since the
 // map index is evaluated before the pipe.
-func Render(tmpls map[string]string, entry string, renderCtx Context, agent AgentClient) (string, error) {
+func Render(tmpls map[string]string, entry string, renderCtx Context, agent AgentClient) ([]byte, error) {
 	t := template.New("pipefitter")
 	fm := FuncMap()
 	// include renders a named template to a string, which is what makes helpers
@@ -116,18 +116,21 @@ func Render(tmpls map[string]string, entry string, renderCtx Context, agent Agen
 	for _, tmplKey := range sortedTmplKeys {
 		tmpl := tmpls[tmplKey]
 		if _, err := t.New(tmplKey).Parse(tmpl); err != nil {
-			return "", fmt.Errorf("failed to parse template %s: %w", tmplKey, err)
+			return nil, fmt.Errorf("template parsing failed: %w", err)
 		}
 	}
 
 	if t.Lookup(entry) == nil {
-		return "", fmt.Errorf("failed to find template entry %s", entry)
+		return nil, fmt.Errorf("template entry not found: %s", entry)
 	}
 
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, entry, renderCtx); err != nil {
-		return "", fmt.Errorf("failed to execute template %s: %w", entry, err)
+		return nil, fmt.Errorf("template execution failed: %w", err)
 	}
 
-	return buf.String(), nil
+	// Returning the buffer's bytes rather than a string avoids a copy here and
+	// another at the call site, which parses them. buf is local, so no caller
+	// can observe the aliasing.
+	return buf.Bytes(), nil
 }

@@ -4,12 +4,13 @@ package cmd
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"sort"
 	"text/tabwriter"
 
-	flag "github.com/spf13/pflag"
+	"github.com/spf13/pflag"
 )
 
 // ErrUsage signals that the user invoked pipefitter incorrectly, or asked for
@@ -27,7 +28,7 @@ type command interface {
 	// Description is a one-line description shown in the top-level help.
 	Description() string
 	// Flags registers subcommand-specific flags.
-	Flags(fs *flag.FlagSet)
+	Flags(fs *pflag.FlagSet)
 	// Run executes the subcommand with the remaining positional arguments,
 	// writing its payload (pipeline YAML) to out.
 	Run(ctx context.Context, out io.Writer, args []string) error
@@ -37,6 +38,7 @@ type command interface {
 func commands() map[string]command {
 	cmds := []command{
 		&versionCmd{},
+		&generateCmd{},
 	}
 
 	reg := make(map[string]command, len(cmds))
@@ -78,7 +80,7 @@ func Run(ctx context.Context, out, errOut io.Writer, args []string) error {
 		return ErrUsage
 	}
 
-	fs := flag.NewFlagSet("pipefitter "+name, flag.ContinueOnError)
+	fs := pflag.NewFlagSet("pipefitter "+name, pflag.ContinueOnError)
 	fs.SetOutput(errOut)
 	cmd.Flags(fs)
 
@@ -96,7 +98,7 @@ func Run(ctx context.Context, out, errOut io.Writer, args []string) error {
 	return cmd.Run(ctx, out, fs.Args())
 }
 
-func commandUsage(w io.Writer, cmd command, fs *flag.FlagSet) {
+func commandUsage(w io.Writer, cmd command, fs *pflag.FlagSet) {
 	fmt.Fprintf(w, "\n%s\n\nUsage:\n\n\tpipefitter %s [flags]\n", cmd.Description(), cmd.Name())
 
 	if usages := fs.FlagUsages(); usages != "" {

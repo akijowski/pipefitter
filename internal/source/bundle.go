@@ -50,6 +50,14 @@ func (b Bundle) TemplateNames() []string {
 	return slices.Sorted(maps.Keys(b.Templates))
 }
 
+func (b Bundle) TemplateSet() map[string]string {
+	m := make(map[string]string, len(b.Templates)+len(b.Helpers))
+	maps.Copy(m, b.Templates)
+	maps.Copy(m, b.Helpers)
+
+	return m
+}
+
 // LoadDir reads the bundle in dir.
 //
 // A missing values.yaml is fine, and so is an empty one — a bundle may exist

@@ -358,12 +358,28 @@ merge in the order given.
 | `--verbose`, `-v` | all        | debug level and above; default is warn and above                     |
 | `--log-file`      | all        | tee log output to this file in addition to stderr                    |
 
-**`--values` replaces auto-discovery.** Passing any `--values` disables
-discovery of `.buildkite/pipefitter/values.yaml`. Implicit input makes "why did
-my pipeline change?" hard to answer; replace always leaves an escape into a
-fully explicit, reproducible invocation. The overlay case is still expressible
-as `--values values.yaml --values prod.yaml`, just stated rather than assumed.
-This must be documented clearly.
+**`--values` layers on top of a bundle's own values.yaml.** Precedence for each
+bundle, lowest to highest:
+
+```
+the bundle's own values.yaml   <-   -f base.yaml   <-   -f prod.yaml
+```
+
+*This supersedes an earlier decision that `--values` would replace
+auto-discovery of `values.yaml`.* That rule was written when `values.yaml` was a
+repo-level convenience file. The bundle model makes it the bundle's **declared
+interface** instead, and templates render with `missingkey=error` — so a
+template can only read keys that file declares. Disabling it would make every
+template fail on its first key reference. A bundle's `values.yaml` is therefore
+always the base and is never disabled.
+
+The concern that motivated "replace" — implicit input making "why did my
+pipeline change?" hard to answer — is addressed differently: a bundle's
+`values.yaml` is not ambient discovery but part of the bundle being explicitly
+named, and `pipefitter values` reports the provenance of every key.
+
+The `-f` files are shared across every bundle in one invocation, while each
+bundle starts its own chain from its own defaults.
 
 `--set` is deliberately absent (deferred). There is deliberately **no
 `--skip-validate`**: fail-closed is the point, and `validate` already exists for

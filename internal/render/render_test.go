@@ -201,7 +201,7 @@ func TestRender(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			assert.Equal(t, tc.want, got)
+			assert.Equal(t, tc.want, string(got))
 		})
 	}
 }
@@ -223,7 +223,7 @@ func TestRenderIsDeterministic(t *testing.T) {
 	for range 20 {
 		got, err := Render(tmpls, "a.tmpl", ctx, NoAgent{})
 		require.NoError(t, err)
-		assert.Equal(t, first, got)
+		assert.Equal(t, string(first), string(got))
 	}
 }
 
