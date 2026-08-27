@@ -79,16 +79,8 @@ func (g *generateCmd) Run(_ context.Context, host Host, args []string) error {
 		return err
 	}
 
-	// Fail closed: a pipeline with findings must not reach stdout. The findings
-	// travel in the error because generate, unlike validate, has not printed
-	// them — and "N problems" without saying what they are is not actionable.
-	if len(checked.findings) > 0 {
-		b, err := marshalFindings(checked.findings)
-		if err != nil {
-			return err
-		}
-
-		return fmt.Errorf("pipeline is not valid: %s", strings.TrimSpace(string(b)))
+	if err = emitFindings(host, checked.findings); err != nil {
+		return err
 	}
 
 	b, err := pipeline.Marshal(checked.doc)

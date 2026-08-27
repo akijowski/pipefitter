@@ -229,6 +229,42 @@ func TestValidateExitsZeroOnASoundPipeline(t *testing.T) {
 	assert.Empty(t, out.String(), "validate never writes a document to stdout")
 }
 
+// TestGenerateReportsFindingsLikeValidate pins that both subcommands report
+// findings the same way — printed to ErrOut, with a one-line sentinel error.
+//
+// Packing the findings into the error instead meant a multi-line error value,
+// which reads badly once main prefixes it, and meant the same information was
+// formatted two different ways depending on which command you ran.
+func TestGenerateReportsFindingsLikeValidate(t *testing.T) {
+	t.Parallel()
+
+	files := map[string]string{
+		defaultBundleDir + "/test.tmpl": "steps:\n" +
+			"  - key: a\n    depends_on: nope\n" +
+			"  - key: b\n    depends_on: alsonope\n",
+	}
+
+	var genOut, genErr bytes.Buffer
+	genHost := hostWith(files, &genOut, &genErr)
+	genRunErr := Run(context.Background(), genHost, []string{"generate"})
+
+	var valOut, valErr bytes.Buffer
+	valHost := hostWith(files, &valOut, &valErr)
+	valRunErr := Run(context.Background(), valHost, []string{"validate"})
+
+	require.Error(t, genRunErr)
+	require.Error(t, valRunErr)
+
+	assert.Equal(t, valErr.String(), genErr.String(),
+		"both commands report findings identically")
+	assert.Contains(t, genErr.String(), "nope")
+	assert.Contains(t, genErr.String(), "alsonope")
+
+	assert.NotContains(t, genRunErr.Error(), "\n",
+		"the error value stays one line; the findings are printed, not embedded")
+	assert.Empty(t, genOut.String(), "and no document reaches stdout")
+}
+
 // TestGenerateExitsNonZeroOnFindings pins fail-closed in the binary rather than
 // only in checkPipeline, and that the reason reaches the user.
 func TestGenerateExitsNonZeroOnFindings(t *testing.T) {
@@ -244,8 +280,8 @@ func TestGenerateExitsNonZeroOnFindings(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Empty(t, out.String(), "a pipeline that fails validation must not reach stdout")
-	assert.Contains(t, err.Error(), "nope",
-		"the error must say what is wrong, not just how many problems there are")
+	assert.Contains(t, errOut.String(), "nope",
+		"the findings must be reported to stderr")
 }
 
 // TestGenerateWritesADocumentOnSuccess is the happy path through Run, which the

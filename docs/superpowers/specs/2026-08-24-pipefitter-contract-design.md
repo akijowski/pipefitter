@@ -383,7 +383,34 @@ merge in the order given.
 | `--values`, `-f`  | all three  | values file; repeatable, layered left-to-right                       |
 | `--output`, `-o`  | `generate` | write to file instead of stdout; `-` means stdout (default)          |
 | `--verbose`, `-v` | all        | debug level and above; default is warn and above                     |
-| `--log-file`      | all        | tee log output to this file in addition to stderr                    |
+| `--log-file`      | all        | write everything sent to stderr to this file as well                 |
+
+**`--log-file` captures the whole stderr transcript, not only log records.** The
+spec originally said it teed `slog`'s writer. That is useless in practice:
+nothing logs at warn yet, so the file would always be empty — and the most
+common failure, a bundle that cannot be read, produces only the final error
+line. It now tees `Host.ErrOut`, so findings, diagnostics and the failure reason
+all land in the file. A file containing everything except the reason would be
+useless exactly when it was needed.
+
+The file is truncated on open: one run, one transcript, rather than accumulating
+across retries of a CI step. Closing it is best-effort — the same bytes already
+reached stderr, which is the authoritative copy, so reporting that a duplicate
+was truncated is not worth complicating the dispatcher's control flow.
+
+`--verbose` is deliberately not implemented yet. With no `slog` call sites it
+would change nothing observable; it becomes meaningful when the first actionable
+warning exists.
+
+**Two known inconsistencies in the hand-rolled dispatcher**, both likely to be
+resolved by adopting a CLI framework rather than fixed in place:
+
+- Flags are accepted anywhere *after* the subcommand, but not before:
+  `pipefitter generate --log-file=x` works, `pipefitter --log-file=x generate`
+  reports an unknown command. Supporting both needs a separate pre-parse pass for
+  flags that apply to every subcommand.
+- `<command> --help` prints the flag list twice. pflag writes its own usage to
+  the FlagSet's output on `ErrHelp`, and then `commandUsage` writes ours.
 
 **`--values` layers on top of a bundle's own values.yaml.** Precedence for each
 bundle, lowest to highest:

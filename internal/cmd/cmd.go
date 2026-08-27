@@ -4,7 +4,6 @@ package cmd
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,10 +14,14 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// ErrUsage signals that the user invoked pipefitter incorrectly, or asked for
-// help. Callers should not log it as an error; the usage text has already been
-// written to stderr.
-var ErrUsage = errors.New("usage")
+var (
+	// ErrHelp signals that the user asked for help. The usage text has already been
+	// written to Host.ErrOut, and this is not a failure.
+	ErrHelp = errors.New("help requested")
+
+	// ErrUsage signals that the invocation was malformed.
+	ErrUsage = errors.New("usage")
+)
 
 // Host is everything a subcommand needs from outside the program.
 //
@@ -107,47 +110,73 @@ func commands() map[string]command {
 // already written the relevant usage text to host.ErrOut.
 func Run(ctx context.Context, host Host, args []string) error {
 	reg := commands()
-	errOut := host.ErrOut
 
 	if len(args) == 0 {
-		usage(errOut, reg)
+		usage(host.ErrOut, reg)
 
-		return ErrUsage
+		return ErrHelp
 	}
 
 	name := args[0]
 
 	switch name {
 	case "-h", "--help", "help":
-		usage(errOut, reg)
+		usage(host.ErrOut, reg)
 
-		return ErrUsage
+		return ErrHelp
 	}
 
 	cmd, ok := reg[name]
 	if !ok {
-		fmt.Fprintf(errOut, "pipefitter: unknown command %q\n\n", name)
-		usage(errOut, reg)
+		fmt.Fprintf(host.ErrOut, "pipefitter: unknown command %q\n\n", name)
+		usage(host.ErrOut, reg)
 
 		return ErrUsage
 	}
 
 	fs := pflag.NewFlagSet("pipefitter "+name, pflag.ContinueOnError)
-	fs.SetOutput(errOut)
+	fs.SetOutput(host.ErrOut)
+
+	var logFile string
+	lfHelp := "also write everything sent to stderr to this file. File is truncated before writes."
+	fs.StringVar(&logFile, "log-file", "", lfHelp)
 	cmd.Flags(fs)
 
 	if err := fs.Parse(args[1:]); err != nil {
 		// pflag stays silent under ContinueOnError, so we report it ourselves.
-		if !errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintf(errOut, "pipefitter %s: %v\n", name, err)
+		if !errors.Is(err, pflag.ErrHelp) {
+			fmt.Fprintf(host.ErrOut, "pipefitter: %s %v\n", name, err)
+
+			return ErrUsage
 		}
 
-		commandUsage(errOut, cmd, fs)
+		commandUsage(host.ErrOut, cmd, fs)
 
-		return ErrUsage
+		return ErrHelp
 	}
 
-	return cmd.Run(ctx, host, fs.Args())
+	if logFile != "" {
+		f, err := os.Create(logFile)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			// consider writing to a log file as best effort.
+			// Stderr should be considered authoritative and
+			// will contain the relevant output.
+			_ = f.Close()
+		}()
+
+		host.ErrOut = io.MultiWriter(host.ErrOut, f)
+	}
+
+	if err := cmd.Run(ctx, host, fs.Args()); err != nil {
+		fmt.Fprintf(host.ErrOut, "pipefitter: %v\n", err)
+
+		return err
+	}
+
+	return nil
 }
 
 func commandUsage(w io.Writer, cmd command, fs *pflag.FlagSet) {

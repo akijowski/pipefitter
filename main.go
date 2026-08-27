@@ -12,12 +12,15 @@ import (
 const (
 	exitCodeSuccess = 0
 	exitCodeErr     = 1
+	exitCodeUsage   = 2
 )
 
 func main() {
 	ctx := context.Background()
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelWarn,
+	})))
 
 	os.Exit(runMain(ctx, cmd.OSHost(), os.Args[1:]))
 }
@@ -32,10 +35,10 @@ func runMain(ctx context.Context, host cmd.Host, args []string) int {
 		return exitCodeSuccess
 	case errors.Is(err, cmd.ErrUsage):
 		// cmd.Run already wrote the usage text to errOut.
-		return exitCodeErr
+		return exitCodeUsage
+	case errors.Is(err, cmd.ErrHelp):
+		return exitCodeSuccess
 	default:
-		slog.ErrorContext(ctx, "command failed", slog.Any("error", err))
-
 		return exitCodeErr
 	}
 }
