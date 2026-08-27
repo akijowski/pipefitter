@@ -53,7 +53,7 @@ func TestRun(t *testing.T) {
 
 			var out, errOut bytes.Buffer
 
-			err := Run(context.Background(), &out, &errOut, tc.args)
+			err := Run(context.Background(), Host{Out: &out, ErrOut: &errOut}, tc.args)
 
 			if tc.wantErr != nil {
 				require.ErrorIs(t, err, tc.wantErr)
@@ -80,7 +80,7 @@ func TestRunUsageStaysOffStdout(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 
-	err := Run(context.Background(), &out, &errOut, []string{"help"})
+	err := Run(context.Background(), Host{Out: &out, ErrOut: &errOut}, []string{"help"})
 
 	require.ErrorIs(t, err, ErrUsage)
 	assert.Empty(t, out.String(), "stdout must carry only pipeline output")

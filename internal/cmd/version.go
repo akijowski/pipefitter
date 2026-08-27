@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io"
 	"runtime/debug"
 
 	flag "github.com/spf13/pflag"
@@ -22,8 +21,8 @@ func (*versionCmd) Description() string { return "print the pipefitter version" 
 
 func (*versionCmd) Flags(*flag.FlagSet) {}
 
-func (*versionCmd) Run(_ context.Context, out io.Writer, _ []string) error {
-	_, err := fmt.Fprintln(out, buildVersion())
+func (*versionCmd) Run(_ context.Context, host Host, _ []string) error {
+	_, err := fmt.Fprintln(host.Out, buildVersion())
 
 	return err
 }

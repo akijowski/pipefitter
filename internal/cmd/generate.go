@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/akijowski/pipefitter/internal/pipeline"
 	"github.com/akijowski/pipefitter/internal/render"
 	"github.com/akijowski/pipefitter/internal/source"
+	"github.com/akijowski/pipefitter/internal/validate"
 	"github.com/akijowski/pipefitter/internal/values"
 )
 
@@ -54,26 +54,53 @@ type pipelinePatch struct {
 	source string
 }
 
+// checkedPipeline is the result of the stages both subcommands share: the
+// merged document, and whatever validation had to say about it.
+//
+// The two travel together because a caller generally needs both — validate
+// reports the findings, generate serializes the document only if there are
+// none — and keeping them in one value means the shared stages run once.
+type checkedPipeline struct {
+	doc      pipeline.Document
+	findings []validate.Finding
+}
+
 func (g *generateCmd) Name() string { return "generate" }
 
 func (g *generateCmd) Description() string { return "generate a pipeline from sources to standard out" }
 
 func (g *generateCmd) Flags(fs *pflag.FlagSet) {
-	fs.StringSliceVarP(&g.valuesFiles, "values", "f", nil, "values files to apply to each bundled source")
+	registerValuesFlag(fs, &g.valuesFiles)
 }
 
-func (g *generateCmd) Run(ctx context.Context, out io.Writer, args []string) error {
-	b, err := buildPipeline(os.DirFS("."), environMap(), args, g.valuesFiles)
+func (g *generateCmd) Run(_ context.Context, host Host, args []string) error {
+	checked, err := checkPipeline(host.FS, host.Environ, args, g.valuesFiles)
 	if err != nil {
 		return err
 	}
 
-	_, err = out.Write(b)
+	// Fail closed: a pipeline with findings must not reach stdout. The findings
+	// travel in the error because generate, unlike validate, has not printed
+	// them — and "N problems" without saying what they are is not actionable.
+	if len(checked.findings) > 0 {
+		b, err := marshalFindings(checked.findings)
+		if err != nil {
+			return err
+		}
+
+		return fmt.Errorf("pipeline is not valid: %s", strings.TrimSpace(string(b)))
+	}
+
+	b, err := pipeline.Marshal(checked.doc)
+	if err != nil {
+		return err
+	}
+	_, err = host.Out.Write(b)
 
 	return err
 }
 
-// buildPipeline renders every bundle in dirs and combines them into one
+// checkPipeline renders every bundle in dirs and combines them into one
 // pipeline document.
 //
 // It takes the filesystem and the environment as arguments rather than reading
@@ -86,10 +113,31 @@ func (g *generateCmd) Run(ctx context.Context, out io.Writer, args []string) err
 // another renders, so bumping a shared bundle's version cannot silently change
 // an unrelated bundle's behavior through a colliding key name.
 //
-// Nothing is written anywhere. The caller receives the finished bytes and
-// decides where they go, which is what lets Run keep stdout empty when any stage
-// fails.
-func buildPipeline(fsys fs.FS, vars map[string]string, dirs, valuesFiles []string) ([]byte, error) {
+// Findings come back as data rather than an error, because the two subcommands
+// treat them differently: validate reports them, generate refuses to emit a
+// document. Only a genuine failure — an unreadable bundle, a template that will
+// not render, a duplicate step key — is returned as an error.
+//
+// Nothing is written anywhere and nothing is serialized. Serialization is
+// generate's own last step, which is what lets validate share these stages
+// without producing a document, and what lets Run keep stdout empty when any
+// stage fails.
+func checkPipeline(fsys fs.FS, vars map[string]string, dirs, valuesFiles []string) (checkedPipeline, error) {
+	checked := checkedPipeline{}
+	merged, err := mergePipeline(fsys, vars, dirs, valuesFiles)
+	if err != nil {
+		return checked, err
+	}
+	checked.doc = merged
+	checked.findings = validate.Run(merged, validate.Rules())
+
+	return checked, nil
+}
+
+// mergePipeline runs the stages before validation: it loads each bundle, builds
+// that bundle's values, renders and parses every template, and merges the
+// resulting documents into one.
+func mergePipeline(fsys fs.FS, vars map[string]string, dirs, valuesFiles []string) (pipeline.Document, error) {
 	if len(dirs) == 0 {
 		dirs = []string{defaultBundleDir}
 	}
@@ -132,14 +180,15 @@ func buildPipeline(fsys fs.FS, vars map[string]string, dirs, valuesFiles []strin
 		}
 	}
 
-	merged, err := pipeline.Merge(srcs)
-	if err != nil {
-		return nil, err
-	}
-
-	return pipeline.Marshal(merged)
+	return pipeline.Merge(srcs)
 }
 
+// loadPatchesFromFiles reads and parses the --values files, once, in the order
+// given.
+//
+// They are read before any bundle is loaded: every bundle layers the same
+// patches, so reading them once avoids re-parsing per bundle, and a missing or
+// malformed file fails before any rendering work happens.
 func loadPatchesFromFiles(fsys fs.FS, patchFiles []string) ([]pipelinePatch, error) {
 	patches := make([]pipelinePatch, 0, len(patchFiles))
 	for _, patchFile := range patchFiles {
@@ -158,6 +207,12 @@ func loadPatchesFromFiles(fsys fs.FS, patchFiles []string) ([]pipelinePatch, err
 	return patches, nil
 }
 
+// mergeValues builds one bundle's values: its own defaults first, then each
+// patch in order, so a later patch wins.
+//
+// The chain starts from an empty Values every time it is called, which is what
+// keeps bundles isolated — one bundle's defaults are never in scope while
+// another renders.
 func mergeValues(defaultSrc string, defaults map[string]any, patches []pipelinePatch) (values.Values, error) {
 	vals := values.Values{}
 	vals, err := values.Merge(vals, defaults, defaultSrc)
@@ -174,6 +229,9 @@ func mergeValues(defaultSrc string, defaults map[string]any, patches []pipelineP
 	return vals, nil
 }
 
+// compileBundleToDocument renders one template from a bundle and parses the
+// result, which is the text-to-structured transition: everything before is
+// strings, everything after is a Document.
 func compileBundleToDocument(name string, bundle source.Bundle, rCtx render.Context) (pipeline.Document, error) {
 	text, err := render.Render(bundle.TemplateSet(), name, rCtx, render.NoAgent{})
 	if err != nil {

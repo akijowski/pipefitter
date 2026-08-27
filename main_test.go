@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/akijowski/pipefitter/internal/cmd"
 )
 
 func TestRunMain(t *testing.T) {
@@ -26,7 +28,7 @@ func TestRunMain(t *testing.T) {
 
 			var out, errOut bytes.Buffer
 
-			got := runMain(context.Background(), &out, &errOut, tc.args)
+			got := runMain(context.Background(), cmd.Host{Out: &out, ErrOut: &errOut}, tc.args)
 
 			assert.Equal(t, tc.wantCode, got, "stderr: %s", errOut.String())
 		})

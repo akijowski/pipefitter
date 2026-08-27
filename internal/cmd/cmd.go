@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"sort"
 	"text/tabwriter"
 
@@ -17,6 +19,42 @@ import (
 // help. Callers should not log it as an error; the usage text has already been
 // written to stderr.
 var ErrUsage = errors.New("usage")
+
+// Host is everything a subcommand needs from outside the program.
+//
+// Passing these in rather than reaching for os.DirFS and os.Environ is what
+// makes the subcommands testable: a test supplies an fstest.MapFS and a plain
+// map, with no working-directory changes and no process environment to restore.
+// Every bug this package has had lived in the code that built these values
+// inline, where no test could reach it.
+//
+// It is a parameter rather than a receiver on purpose. On a receiver, methods
+// quietly reach for fields until the struct is a god object; as a parameter,
+// every dependency stays visible in the signature.
+type Host struct {
+	// FS is the tree bundles and values files are read from, rooted at the
+	// working directory.
+	FS fs.FS
+	// Environ is the process environment, which becomes .Env in a template.
+	Environ map[string]string
+	// Out receives the generated pipeline, and nothing else.
+	Out io.Writer
+	// ErrOut receives usage, diagnostics and validation findings.
+	ErrOut io.Writer
+}
+
+// OSHost builds a Host from the current process.
+//
+// This is the only place pipefitter touches ambient process state, which is
+// what keeps everything below it a function of its inputs.
+func OSHost() Host {
+	return Host{
+		FS:      os.DirFS("."),
+		Environ: environMap(),
+		Out:     os.Stdout,
+		ErrOut:  os.Stderr,
+	}
+}
 
 // command is a single pipefitter subcommand.
 //
@@ -29,9 +67,22 @@ type command interface {
 	Description() string
 	// Flags registers subcommand-specific flags.
 	Flags(fs *pflag.FlagSet)
-	// Run executes the subcommand with the remaining positional arguments,
-	// writing its payload (pipeline YAML) to out.
-	Run(ctx context.Context, out io.Writer, args []string) error
+	// Run executes the subcommand with the remaining positional arguments.
+	// A subcommand with a payload writes it to host.Out; diagnostics and
+	// findings go to host.ErrOut. A subcommand with no payload, such as
+	// validate, must leave host.Out untouched.
+	Run(ctx context.Context, host Host, args []string) error
+}
+
+// registerValuesFlag declares --values on fs, binding it to files.
+//
+// generate and validate both take it and must agree on its name, shorthand and
+// description, since they accept the same inputs and differ only in what they do
+// with the result. Declared here rather than embedded in a shared struct so each
+// subcommand's Flags method stays explicit and can add flags of its own.
+func registerValuesFlag(fs *pflag.FlagSet, files *[]string) {
+	fs.StringSliceVarP(files, "values", "f", nil,
+		"values file layered over each bundle's own defaults; repeatable, applied left to right")
 }
 
 // commands is the subcommand registry, keyed by Name.
@@ -39,6 +90,7 @@ func commands() map[string]command {
 	cmds := []command{
 		&versionCmd{},
 		&generateCmd{},
+		&validateCmd{},
 	}
 
 	reg := make(map[string]command, len(cmds))
@@ -51,11 +103,11 @@ func commands() map[string]command {
 
 // Run parses args and dispatches to the named subcommand.
 //
-// out receives command output (the generated pipeline); errOut receives usage
-// and diagnostics. Run returns ErrUsage for help requests and malformed
-// invocations, having already written the relevant usage text to errOut.
-func Run(ctx context.Context, out, errOut io.Writer, args []string) error {
+// Run returns ErrUsage for help requests and malformed invocations, having
+// already written the relevant usage text to host.ErrOut.
+func Run(ctx context.Context, host Host, args []string) error {
 	reg := commands()
+	errOut := host.ErrOut
 
 	if len(args) == 0 {
 		usage(errOut, reg)
@@ -95,7 +147,7 @@ func Run(ctx context.Context, out, errOut io.Writer, args []string) error {
 		return ErrUsage
 	}
 
-	return cmd.Run(ctx, out, fs.Args())
+	return cmd.Run(ctx, host, fs.Args())
 }
 
 func commandUsage(w io.Writer, cmd command, fs *pflag.FlagSet) {

@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/akijowski/pipefitter/internal/pipeline"
 )
 
 // bundleFS is the shape a repository has: one bundle under the default path.
@@ -18,6 +20,18 @@ func bundleFS(files map[string]string) fstest.MapFS {
 	}
 
 	return fsys
+}
+
+// generateYAML runs the shared stages and then serializes, which is what the
+// generate subcommand does. Tests that care about the emitted document use this
+// rather than reaching into the intermediate result.
+func generateYAML(fsys fstest.MapFS, vars map[string]string, dirs, valuesFiles []string) ([]byte, error) {
+	checked, err := checkPipeline(fsys, vars, dirs, valuesFiles)
+	if err != nil {
+		return nil, err
+	}
+
+	return pipeline.Marshal(checked.doc)
 }
 
 func TestGenerateRegistered(t *testing.T) {
@@ -168,7 +182,7 @@ func TestBuildPipeline(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := buildPipeline(bundleFS(tc.files), tc.vars, tc.dirs, tc.valuesFiles)
+			got, err := generateYAML(bundleFS(tc.files), tc.vars, tc.dirs, tc.valuesFiles)
 
 			if tc.wantErr != "" {
 				require.Error(t, err)
@@ -199,7 +213,7 @@ func TestBuildPipelineDefaultsToTheConventionalDir(t *testing.T) {
 		defaultBundleDir + "/test.tmpl": "steps:\n  - key: t\n",
 	})
 
-	got, err := buildPipeline(fsys, nil, nil, nil)
+	got, err := generateYAML(fsys, nil, nil, nil)
 
 	require.NoError(t, err)
 	assert.Contains(t, string(got), "key: t")
@@ -215,7 +229,7 @@ func TestBuildPipelineOutputIsValidYAML(t *testing.T) {
 		defaultBundleDir + "/b.tmpl": "env:\n  B: \"2\"\nsteps:\n  - key: two\n",
 	})
 
-	got, err := buildPipeline(fsys, nil, nil, nil)
+	got, err := generateYAML(fsys, nil, nil, nil)
 	require.NoError(t, err)
 
 	assert.Contains(t, string(got), "A: \"1\"")
@@ -230,7 +244,9 @@ func TestGenerateWritesNothingToStdoutOnFailure(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 
-	err := Run(context.Background(), &out, &errOut, []string{"generate", "does-not-exist"})
+	host := Host{FS: fstest.MapFS{}, Out: &out, ErrOut: &errOut}
+
+	err := Run(context.Background(), host, []string{"generate", "does-not-exist"})
 
 	require.Error(t, err)
 	assert.Empty(t, out.String(), "stdout must stay empty when generate fails")

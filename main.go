@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"os"
 
@@ -20,13 +19,13 @@ func main() {
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
-	os.Exit(runMain(ctx, os.Stdout, os.Stderr, os.Args[1:]))
+	os.Exit(runMain(ctx, cmd.OSHost(), os.Args[1:]))
 }
 
-// runMain is the testable entrypoint. Generated pipeline YAML goes to out;
-// everything else — logs, usage, diagnostics — goes to errOut.
-func runMain(ctx context.Context, out, errOut io.Writer, args []string) int {
-	err := cmd.Run(ctx, out, errOut, args)
+// runMain is the testable entrypoint. Generated pipeline YAML goes to
+// host.Out; everything else — logs, usage, diagnostics — goes to host.ErrOut.
+func runMain(ctx context.Context, host cmd.Host, args []string) int {
+	err := cmd.Run(ctx, host, args)
 
 	switch {
 	case err == nil:
