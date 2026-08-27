@@ -193,6 +193,33 @@ and testable rather than invented:
 - Type mismatch: the patch value wins entirely.
 - **`null` deletes the key.**
 
+**Recursion limits, measured rather than assumed.** `values.Merge` bounds its
+recursion because stack overflow in Go is a fatal error that `recover` cannot
+catch. Two of the original justifications have since been tested:
+
+- *"YAML aliases can produce a self-referential structure."* **False for
+  `goccy/go-yaml`.** It resolves a recursive alias to `nil` rather than building
+  a cycle, verified for all three forms (`steps: &a [{steps: *a}]`,
+  `a: &x {self: *x}`, `a: &x [*x]`). No cyclic structure can reach a parsed
+  document. The guard is still worth keeping — it protects against a
+  programmatic caller passing a hand-built cyclic map, which the tests do — but
+  it is not defending against YAML.
+- *Deep nesting.* Self-limiting, because YAML indentation makes nesting
+  quadratically expensive: depth 400 needs 650KB of input, depth 3000 needs 36MB.
+  goccy parsed depth 3000 in 381ms, so its own parser recurses deeper than any
+  walk of ours before we are reached.
+
+Consequently the recursive walks in `pipeline` and `validate` do **not** carry
+depth guards. That is a decision, not an omission.
+
+**An unmitigated gap: alias expansion.** goccy parses a "billion laughs"
+document without complaint — seven levels of nine-way aliases expand roughly
+300 bytes into ~4.8M elements. A depth limit does not help, because expansion
+happens during parsing, before pipefitter sees a document. This matters most for
+phase 2, where bundles come from remote sources. Options if it becomes real:
+bound the input size before parsing, or check whether goccy grows an expansion
+limit.
+
 Array-replace is the right call independent of the standard: append-semantics
 would make a template default impossible to remove. `null`-deletes provides the
 removal escape hatch.
@@ -510,6 +537,7 @@ Each deferral names the seam that keeps it additive rather than a refactor.
 | `buildkite-agent` template functions (consul-template inspired) | `AgentClient` interface injected into render                 |
 | Answer files, faking agent I/O for local runs                   | second `AgentClient` implementation                          |
 | Priority weights instead of source order                        | source order remains the default                             |
+| `pipefitter render` — the merged document without validation    | the same stages as `generate`, stopping before validation     |
 
 Notes on two of these:
 
@@ -523,6 +551,29 @@ which carries `HeadComment`/`LineComment`/`FootComment` and round-trips them.
 That is meaningfully more code than map merging, and RFC 7396 is defined over
 plain JSON-ish data. So this is a possible refactor of the merge layer, not a
 cheap template function. Recording it honestly.
+
+**`pipefitter render`.** Validation runs on the *merged* document, by which point
+source attribution is gone — `pipeline.Source` carries a template name but
+`Merge` discards it. So a dangling `depends_on` in a twelve-template pipeline can
+name the step at fault but not the file that declared it.
+
+Threading provenance through `Document` was considered and rejected: it is the
+comment-preservation problem again, making every merge carry attribution it
+mostly does not need.
+
+The gap is addressed instead by letting the user see the document:
+
+```
+pipefitter generate   -> validated document, for uploading
+pipefitter render     -> merged document, no validation, for reading
+```
+
+A separate command rather than `generate --no-validate`, which the CLI surface
+section rules out. That objection stands: fail-closed is what makes
+`generate | buildkite-agent pipeline upload` safe, and an escape hatch on the
+same command is what someone reaches for under deadline pressure — and
+`generate --no-validate` in a checked-in `pipeline.yml` would survive review,
+where `render` piped into `pipeline upload` would not.
 
 **Agent functions.** Design decided ahead of implementation, so the seam is
 right the first time.
