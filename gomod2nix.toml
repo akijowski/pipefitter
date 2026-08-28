@@ -1,3 +1,74 @@
 schema = 3
 
 [mod]
+  [mod.'dario.cat/mergo']
+    version = 'v1.0.1'
+    hash = 'sha256-wcG6+x0k6KzOSlaPA+1RFxa06/RIAePJTAjjuhLbImw='
+
+  [mod.'github.com/Masterminds/goutils']
+    version = 'v1.1.1'
+    hash = 'sha256-MEvA5e099GUllILa5EXxa6toQexU1sz6eDZt2tiqpCY='
+
+  [mod.'github.com/Masterminds/semver/v3']
+    version = 'v3.3.0'
+    hash = 'sha256-fBG3nuxEW+0fRHegSzj7q4GyEMCINeOUbkfqFG2cU+8='
+
+  [mod.'github.com/Masterminds/sprig/v3']
+    version = 'v3.3.0'
+    hash = 'sha256-NvFX1xRO5t/u8OI063SDPfqYcZ43AuLI6klA6daPV9I='
+
+  [mod.'github.com/goccy/go-yaml']
+    version = 'v1.19.2'
+    hash = 'sha256-pkqkwtziwXoWlTOxJsPFdMc7Mj0mSC3Ll/xUmYAYcYE='
+
+  [mod.'github.com/google/uuid']
+    version = 'v1.6.0'
+    hash = 'sha256-VWl9sqUzdOuhW0KzQlv0gwwUQClYkmZwSydHG2sALYw='
+
+  [mod.'github.com/huandu/xstrings']
+    version = 'v1.5.0'
+    hash = 'sha256-q4F/rzbWMDmOVv07RVApdpfIsRNRByfOUQPEKsTq5BM='
+
+  [mod.'github.com/mitchellh/copystructure']
+    version = 'v1.2.0'
+    hash = 'sha256-VR9cPZvyW62IHXgmMw8ee+hBDThzd2vftgPksQYR/Mc='
+
+  [mod.'github.com/mitchellh/reflectwalk']
+    version = 'v1.0.2'
+    hash = 'sha256-VX9DPqChm7jPnyrA3RAYgxAFrAhj7TRKIWD/qR9Zr9s='
+
+  [mod.'github.com/rogpeppe/go-internal']
+    version = 'v1.16.0'
+    hash = 'sha256-taz3iAUJayomgTV637S27ZkI4VD7ulkOVdMj68woTxE='
+
+  [mod.'github.com/shopspring/decimal']
+    version = 'v1.4.0'
+    hash = 'sha256-U36bC271jQsjuWFF8BfLz4WicxPJUcPHRGxLvTz4Mdw='
+
+  [mod.'github.com/spf13/cast']
+    version = 'v1.7.0'
+    hash = 'sha256-xO2kSmNmMHaJ1i3T0ou0pcaBCusuO6Ep3xtF1P7ZadA='
+
+  [mod.'github.com/spf13/pflag']
+    version = 'v1.0.10'
+    hash = 'sha256-uDPnWjHpSrzXr17KEYEA1yAbizfcsfo5AyztY2tS6ZU='
+
+  [mod.'github.com/stretchr/testify']
+    version = 'v1.12.1'
+    hash = 'sha256-9MTDdVjZMh1MJ5EH3HmAFrm24YqZayeMBgKwtaURZCc='
+
+  [mod.'go.yaml.in/yaml/v3']
+    version = 'v3.0.5'
+    hash = 'sha256-ygho+GU5kE7vPMx+dZYyNfCaeMjNxj66XmrcVf3afFE='
+
+  [mod.'golang.org/x/crypto']
+    version = 'v0.26.0'
+    hash = 'sha256-Iicrsb65fCmjfPILKoSLyBZMwe2VUcoTF5SpYTCQEuk='
+
+  [mod.'golang.org/x/sys']
+    version = 'v0.26.0'
+    hash = 'sha256-YjklsWNhx4g4TaWRWfFe1TMFKujbqiaNvZ38bfI35fM='
+
+  [mod.'golang.org/x/tools']
+    version = 'v0.26.0'
+    hash = 'sha256-drBvWfz/yBxABO9LUiLLV2ra5rw5VL2FrEjprdOtJhg='
