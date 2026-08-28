@@ -1,0 +1,24 @@
+# --log-file records everything that went to stderr.
+
+# A failure with findings: both the finding and the reason are captured.
+! exec pipefitter validate dangling --log-file run.log
+cmp stderr run.log
+
+# A failure with no findings still records why, which is the case that matters.
+! exec pipefitter generate does-not-exist --log-file missing.log
+grep 'does-not-exist' missing.log
+grep 'pipefitter:' missing.log
+
+# The file is truncated per run rather than accumulating.
+exec pipefitter validate sound --log-file stale.log
+! grep 'STALE' stale.log
+
+-- stale.log --
+STALE content from an earlier run
+-- sound/a.tmpl --
+steps:
+  - key: test
+-- dangling/b.tmpl --
+steps:
+  - key: deploy
+    depends_on: nope

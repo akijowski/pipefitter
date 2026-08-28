@@ -1,0 +1,37 @@
+# A values file layers over the bundle's own defaults, left to right.
+
+# The bundle's default on its own.
+exec pipefitter generate
+stdout 'queue: default'
+
+# One file overrides it.
+exec pipefitter generate --values prod.yaml
+stdout 'queue: prod'
+! stdout 'queue: default'
+
+# Later files win over earlier ones.
+exec pipefitter generate --values base.yaml --values prod.yaml
+stdout 'queue: prod'
+
+# A key only the bundle declares survives the override.
+exec pipefitter generate --values prod.yaml
+stdout 'go 1.26'
+
+# A missing values file is a failure, and says which one.
+! exec pipefitter generate --values absent.yaml
+stderr 'absent.yaml'
+! stdout .
+
+-- .buildkite/pipefitter/values.yaml --
+goVersion: "1.26"
+queue: default
+-- base.yaml --
+queue: base
+-- prod.yaml --
+queue: prod
+-- .buildkite/pipefitter/test.tmpl --
+agents:
+  queue: "{{ .Values.queue }}"
+steps:
+  - key: test
+    label: "go {{ .Values.goVersion }}"

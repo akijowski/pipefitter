@@ -1,0 +1,23 @@
+# Asking for help succeeds; getting the invocation wrong does not.
+
+exec pipefitter --help
+exec pipefitter -h
+exec pipefitter help
+exec pipefitter version
+exec pipefitter generate --help
+exec pipefitter validate --help
+
+# Help goes to stderr, never stdout, so a pipe is never polluted.
+exec pipefitter help
+! stdout .
+stderr 'Usage'
+
+! exec pipefitter bogus
+stderr 'unknown command'
+
+! exec pipefitter version --nope
+stderr 'unknown flag'
+
+! exec pipefitter generate does-not-exist
+stderr 'does-not-exist'
+! stdout .

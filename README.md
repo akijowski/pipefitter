@@ -54,8 +54,22 @@ just clean   # Remove build artifacts
 ### Testing
 
 ```bash
-just test    # Run tests
+just test              # Every test
+just unit-test         # Everything except the CLI scripts
+just test-race         # Every test under the race detector, as CI does
+just update-scripts    # Regenerate the CLI scripts' golden output
 ```
+
+All three test targets pass extra flags through to `go test`:
+
+```bash
+just test -v -count=1
+just unit-test -run TestMerge -v
+```
+
+`unit-test` exists because the CLI scripts log every script line under `-v`,
+which drowns out everything else. They stay silent unless they fail, so plain
+`just test` is unaffected.
 
 ### Linting
 
@@ -71,14 +85,19 @@ Two workflows run automatically:
 
 Three independent jobs, so a lint failure does not hide a test failure:
 
-- **Test** — `gofmt -s` check, `go vet`, then `go test -race ./...`
+- **Test** — `gofmt -s` check, a `go mod tidy` check, `go vet`, then `just test-race`
 - **Lint** — `golangci-lint` at the version pinned in the workflow, configured by
   `.golangci.yml`
 - **Build** — GoReleaser snapshot build
 
-CI calls the Go toolchain directly rather than going through `just`. The Justfile
-stays the convenience layer for local development; CI uses the official pinned
-actions for lint and build so there is no third tool to install and keep current.
+The Test job runs `just test-race`, the same command you run locally, so the two
+cannot drift. `just` is installed with a commit-pinned action rather than a
+`curl` of a release tarball — an earlier version of this workflow used the
+latter, and it silently installed nothing while reporting success.
+
+Lint and build still use their official pinned actions directly, since neither
+`golangci-lint` nor `goreleaser` is installed on the runner and both actions
+handle that themselves.
 
 Go's version comes from `go-version-file: go.mod`, so CI cannot drift from the
 module's declared version.
@@ -92,6 +111,7 @@ Actions are pinned to commit hashes for supply-chain security:
 - `actions/setup-go@40f1582b` (v5)
 - `golangci/golangci-lint-action@ba0d7d2e` (v9.3.0)
 - `goreleaser/goreleaser-action@f06c13b6` (v7.2.3)
+- `taiki-e/install-action@37f7c578` (v2.87.0)
 
 ## Releases
 

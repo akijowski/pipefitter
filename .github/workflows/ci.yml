@@ -48,8 +48,16 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # Installed so CI runs the same command a developer runs locally, rather
+      # than a copy of it that can drift. Pinned by commit like every other
+      # action here.
+      - name: Install just
+        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
+        with:
+          tool: just
+
       - name: Test
-        run: go test -race ./...
+        run: just test-race
 
   lint:
     name: Lint

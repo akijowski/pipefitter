@@ -1,0 +1,27 @@
+# validate reports findings and never writes a document.
+
+# A sound pipeline is silent and succeeds.
+exec pipefitter validate sound
+! stdout .
+! stderr .
+
+# A dangling dependency fails, naming the missing key and the step wanting it.
+! exec pipefitter validate dangling
+stderr 'nope'
+stderr 'deploy'
+! stdout .
+
+# generate refuses the same pipeline rather than emitting it.
+! exec pipefitter generate dangling
+! stdout .
+stderr 'nope'
+
+-- sound/a.tmpl --
+steps:
+  - key: test
+  - key: deploy
+    depends_on: test
+-- dangling/b.tmpl --
+steps:
+  - key: deploy
+    depends_on: nope

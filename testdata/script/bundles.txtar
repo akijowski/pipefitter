@@ -1,0 +1,37 @@
+# Several bundles merge in the order given, each keeping its own defaults.
+
+exec pipefitter generate shared local
+cmp stdout want.yaml
+
+# Order determines the order steps appear in.
+exec pipefitter generate local shared
+stdout -count=1 'key: shared'
+stdout -count=1 'key: local'
+
+# A duplicate key across bundles is rejected, naming both templates.
+! exec pipefitter generate shared clash
+stderr 'shared/a.tmpl'
+stderr 'clash/c.tmpl'
+! stdout .
+
+-- shared/values.yaml --
+who: shared
+-- shared/a.tmpl --
+steps:
+  - key: shared
+    label: "{{ .Values.who }}"
+-- local/values.yaml --
+who: local
+-- local/b.tmpl --
+steps:
+  - key: local
+    label: "{{ .Values.who }}"
+-- clash/c.tmpl --
+steps:
+  - key: shared
+-- want.yaml --
+steps:
+  - key: shared
+    label: shared
+  - key: local
+    label: local

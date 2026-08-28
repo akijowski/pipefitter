@@ -1,0 +1,29 @@
+# generate renders a bundle to stdout as YAML.
+env BUILDKITE_BRANCH=main
+env BUILDKITE_COMMIT=abc123
+
+exec pipefitter generate
+cmp stdout want.yaml
+
+# Nothing is said on stderr when it works.
+! stderr .
+
+-- .buildkite/pipefitter/values.yaml --
+goVersion: "1.26"
+queue: default
+-- .buildkite/pipefitter/test.tmpl --
+agents:
+  queue: "{{ .Values.queue }}"
+steps:
+  - key: test
+    label: ":go: test {{ .Values.goVersion }}"
+    command: go test ./...
+    branches: "{{ .Env.Buildkite.Branch }}"
+-- want.yaml --
+agents:
+  queue: default
+steps:
+  - branches: main
+    command: go test ./...
+    key: test
+    label: ":go: test 1.26"
