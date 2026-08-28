@@ -1,0 +1,10 @@
+# Every key a template in this bundle reads must appear here. This file is the
+# bundle's interface: a reader can see what it accepts without reading the
+# templates.
+goVersion: "1.26"
+queue: default
+
+# Declared with "" rather than a bare `label:`. An empty YAML value is null, and
+# null deletes the key — which would make the template below fail. With "" the
+# key is present, so `default` can supply a fallback.
+label: ""

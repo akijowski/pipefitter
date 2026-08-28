@@ -1,0 +1,14 @@
+agents:
+  queue: "{{ .Values.queue }}"
+
+steps:
+  - key: test
+    label: "{{ .Values.label | default ":go: test" }}"
+    command: go test ./...
+
+    # .Env.Buildkite is typed, so a misspelled field is an error rather than an
+    # empty string. Outside a Buildkite agent Branch is empty, hence the default.
+    branches: "{{ .Env.Buildkite.Branch | default "main" }}"
+
+    env:
+      GO_VERSION: "{{ .Values.goVersion }}"

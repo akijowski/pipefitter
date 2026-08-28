@@ -1733,7 +1733,15 @@ is absent fails the render rather than emitting anything. Document:
 
 - **Behavior.** Any absent key in `.Values` or `.Env.Vars` is an error naming the
   key. A bundle must declare every key its templates read in its `values.yaml`,
-  even as `null` — that file is the bundle's documented interface, as in Helm.
+  that file is the bundle's documented interface, as in Helm.
+
+  **Correction, found while writing the README against the running binary:** an
+  earlier version of this said to declare such a key "even as `null`". The two
+  documented rules interact to invert that. Under RFC 7396 a null *deletes* the
+  key, so `queue:`, `queue: ~` and `queue: null` all leave it absent, and
+  `missingkey=error` then rejects any template reading it. Declare with an empty
+  string — `queue: ""` — which leaves the key present so `default` can supply a
+  fallback.
 - **Reasoning.** Without it, `text/template` emits the literal string
   `<no value>`. That is *valid YAML*, so `tag: {{ .Values.nope }}` would produce
   `tag: <no value>` and ship a real string of that name to Buildkite. A failed
@@ -1745,8 +1753,9 @@ is absent fails the render rather than emitting anything. Document:
   because the map index is evaluated before the pipe and fails first. Show both:
 
   ```yaml
-  # values.yaml — declares the interface, empty is fine
-  queue:
+  # values.yaml — declares the interface. Note "" rather than a bare `queue:`,
+  # which is null and would delete the key.
+  queue: ""
   ```
   ```
   {{ .Values.queue | default "default-queue" }}   # works: present but empty

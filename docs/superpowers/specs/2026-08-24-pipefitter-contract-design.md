@@ -1,7 +1,12 @@
 # Pipefitter CLI Contract & Architecture
 
-**Date:** 2026-08-24
-**Status:** Approved design, not yet implemented
+**Date:** 2026-08-24 (design), 2026-08-28 (revised against the implementation)
+**Status:** MVP implemented. Phase 2 work is listed under
+[Deferred work](#deferred-work-in-priority-order).
+
+Sections marked **as built** record where the implementation diverged from the
+original design, and why. Where the two disagree, the implementation is correct
+and this document has been corrected.
 
 ## Purpose
 
@@ -85,7 +90,27 @@ ceremony.
 - `pipeline` merge — hides internal representation.
 - `render.AgentClient` — future `buildkite-agent` I/O (see Deferred). Defined in
   v1 even if unused, so the feature is additive.
-- `Env` / clock — ambient process dependencies.
+- `cmd.Host` — ambient process state. **As built:** the design called this `Env`
+  and predicted env-var reading would force it into existence. Neither held.
+  It is named `Host` because `bkenv.Env` — the *template's* view of the
+  environment — appears in the same call chain and the two would be confused.
+  And the forcing function was not env vars but the testability of `Run`: the
+  subcommands built `os.DirFS(".")` and the environment inline, which is where
+  every bug in that package lived, because no test could reach it.
+
+  ```go
+  type Host struct {
+      FS      fs.FS             // bundles and values files
+      Environ map[string]string // becomes .Env in a template
+      Out     io.Writer         // the pipeline, and nothing else
+      ErrOut  io.Writer         // usage, diagnostics, findings, the failure line
+  }
+
+  func OSHost() Host   // the only place pipefitter touches process state
+  ```
+
+  A parameter, never a receiver. No clock exists yet; `now` is not registered as
+  a template function, so nothing needs one.
 
 ## Sources and bundles
 
@@ -230,7 +255,19 @@ removal escape hatch.
 queue:        # this DELETES the bundle's default
 ```
 
-is a deletion, not a no-op. `pipefitter values` must render deletions
+is a deletion, not a no-op. So do `queue: ~` and `queue: null`.
+
+This interacts with `missingkey=error` in a way that inverts the obvious advice.
+A bundle is supposed to declare every key its templates read, but it cannot
+declare one as null — that deletes it, and the template then fails with "no entry
+for key". Declare with an empty string instead:
+
+```yaml
+queue: ""     # present, so {{ .Values.queue | default "x" }} works
+```
+
+Verified against the binary: `queue:`, `queue: ~` and `queue: null` all error;
+`queue: ""` and `queue: real` both work. `pipefitter values` must render deletions
 explicitly (`queue: <deleted by values.yaml>`) so this is visible rather than
 mysterious.
 
@@ -300,6 +337,36 @@ know these functions.
 
 `now` is sourced from an injected clock rather than the wall clock, for the same
 determinism reason.
+
+## Missing keys
+
+**As built.** Templates render with `missingkey=error`, so reading a key that is
+absent fails the render rather than emitting anything. This was not in the
+original design and was decided during implementation.
+
+Without it, `text/template` emits the literal string `<no value>` — which is
+*valid YAML*. So `tag: {{ .Values.nope }}` would produce `tag: <no value>` and
+ship a step carrying a real string of that name to Buildkite. A failed render is
+strictly better than a silently wrong pipeline, which is the same reasoning
+behind the typed `.Env.Buildkite` struct.
+
+The obvious middle ground does not exist. `missingkey=zero` still prints
+`<no value>` for a `map[string]any`, because the zero value of `any` is a nil
+interface. It only helps typed maps, verified against the binary:
+
+```
+map[string]any      missingkey=zero    "<no value>"     <- .Values
+map[string]string   missingkey=zero    ""               <- .Env.Vars
+```
+
+**Consequence for `default`.** Sprig's `default` covers a key that is present but
+empty. It cannot cover an absent one, because the map index is evaluated before
+the pipe and fails first. A bundle must therefore declare every key its templates
+read, using `""` and not a bare `key:` — see the sharp edge under Values merge.
+
+The upshot is that a bundle's `values.yaml` becomes its documented interface,
+which is the property that makes a shared bundle readable without opening its
+templates.
 
 ## Document merge
 
@@ -484,6 +551,30 @@ This requires splitting the existing `ErrUsage` sentinel: asking for help is a
 success, misuse is a 2. Small change to `runMain`'s switch plus a second
 sentinel.
 
+### As built: the shared seam
+
+The design said the subcommands are "the same pipeline truncated at different
+stages". In the implementation that is two functions in `internal/cmd`:
+
+| Function | Stages | Returns |
+| --- | --- | --- |
+| `mergePipeline` | 1-6: load, merge values, render, parse, merge documents | `pipeline.Document` |
+| `checkPipeline` | 1-7: the above, then validate | `checkedPipeline{doc, findings}` |
+
+`generate` calls `checkPipeline`, refuses on findings, then serializes — stage 8
+belongs to it alone. `validate` calls `checkPipeline` and reports. The deferred
+`render` command calls `mergePipeline`, which is why the split is drawn there.
+
+**Findings are returned as data, not as an error.** That is what lets the two
+commands treat the same result differently: `validate` prints them and exits
+non-zero, `generate` refuses to emit. Only a genuine failure — an unreadable
+bundle, a template that will not render, a duplicate step key — is an error.
+
+A stage-composition framework (a `[]stage` each command slices) was considered
+and rejected: with three commands and a fixed order, named functions are cheaper
+and clearer. It becomes worth revisiting at four or five commands, or if the
+order ever varies.
+
 ### The stdout invariant
 
 **Stdout carries a pipeline document and nothing else.** Logs, usage,
@@ -551,22 +642,118 @@ directly; and `--output` / `--log-file` become testable via `cmp`.
 Invariant tests remain their own category — stdout empty on every failure path.
 `TestRunUsageStaysOffStdout` already exists.
 
-## Deferred, with seams
+## Deferred work, in priority order
 
-Each deferral names the seam that keeps it additive rather than a refactor.
+Ranked 2026-08-28. Each entry names the seam that keeps it additive rather than a
+refactor, so none of this requires unpicking the MVP.
 
-| Deferred                                                        | Seam                                                         |
-| --------------------------------------------------------------- | ------------------------------------------------------------ |
-| `--set` overrides                                               | another layer in the `Merge` fold                            |
-| Namespaced per-source values + step-key namespacing             | one coherent feature; lookup falls back to top-level         |
-| Validation against the official Buildkite schema                | `validate` is a rule set; add a rule                         |
-| YAML comment preservation                                       | `pipeline` hides its representation; may move to `yaml.Node`  |
-| `buildkite-agent` template functions (consul-template inspired) | `AgentClient` interface injected into render                 |
-| Answer files, faking agent I/O for local runs                   | second `AgentClient` implementation                          |
-| Priority weights instead of source order                        | source order remains the default                             |
-| `pipefitter render` — the merged document without validation    | the same stages as `generate`, stopping before validation     |
+| # | Item | Seam |
+| --- | --- | --- |
+| 1 | **Remote bundles via go-getter** | `source.LoadDir` takes an `fs.FS`; resolution happens before it |
+| 2 | **Agent integration** — a single feature, see below | `render.AgentClient`, already threaded through `Render` |
+| 3 | **`pipefitter values`** — effective values and their provenance | `values.Merge` already records `Origins` |
+| 4 | **`pipefitter render`** — merged document, no validation | calls `mergePipeline`, the existing stage-6 seam |
+| 5 | **`--set` overrides** | another layer in the `Merge` fold |
+| 6 | **`--output` / `-o`** | `Host.Out` is already the only writer |
+| 7 | **Buildkite schema validation** | `validate` is a rule set; add a rule |
+| 8 | **Namespaced per-source values + step-key namespacing** | one coherent feature; lookup falls back to top-level |
 
-Notes on two of these:
+### Item 2: agent integration ships as one feature
+
+Three things that were listed separately during ranking, and are one piece of
+work:
+
+- **Threading `ctx`** through `Run`, `checkPipeline`, `mergePipeline`,
+  `compileBundleToDocument` and into `render.Render`. It is accepted and dropped
+  at every one of those today. This is not a follow-up to the agent functions;
+  `AgentClient.MetaData` takes a `context.Context`, so it has to land first or
+  as the same feature's opening commit.
+- **The template functions themselves**, backed by a real `AgentClient` that
+  shells out to `buildkite-agent`. Memoizing and recording, per the design
+  decision recorded below.
+- **Answer files**, a second `AgentClient` implementation, so a template using
+  agent functions can still be rendered locally where no agent exists. Without
+  it the feature is unusable outside CI, which is where people write templates.
+
+This is also the likely home of **the first `slog` call sites**. Agent I/O is
+where warn-level logging finally has something actionable to say — a lookup that
+fell back to an answer file, a key the agent did not have — which is the
+condition the logging design has been waiting for.
+
+### Source attribution for findings is explicitly not planned
+
+Validation runs on the merged document, where `pipeline.Source`'s template name
+has been discarded, so a finding names the step at fault but not the file that
+declared it.
+
+**Item 4 (`render`) is the accepted answer to this**, not a workaround for it.
+Being able to read the whole merged document is enough to locate a problem, and
+it costs nothing beyond a command that stops at stage 6. Threading provenance
+through `Document` would mean every merge carrying attribution that almost
+nothing reads — the same objection that defers comment preservation — so it is
+ruled out rather than deferred.
+
+*(An earlier revision of this document had the relationship backwards, treating
+attribution as the real fix and `render` as a stopgap.)*
+
+**`render` must be a separate command, not `generate --no-validate`.**
+
+```
+pipefitter generate   -> validated document, for uploading
+pipefitter render     -> merged document, no validation, for reading
+```
+
+Fail-closed on `generate` is what makes
+`pipefitter generate | buildkite-agent pipeline upload` safe, and an escape hatch
+on that same command is what someone reaches for under deadline pressure.
+`generate --no-validate` in a checked-in `pipeline.yml` would survive review;
+`render` piped into `pipeline upload` would not. The CLI surface section rules
+out the flag for this reason, and that still stands.
+
+### Item 1 is the largest
+
+Remote bundles bring a protocol allowlist, a dependency with a CVE history, and
+— unlike everything else here — input that is not first-party, which raises the
+stakes on the alias-expansion gap below.
+
+### Unprioritized
+
+Equal and low priority as of 2026-08-28.
+
+| Item | Note |
+| --- | --- |
+| `--verbose` / `-v` | Nothing logs at warn yet, so it would reveal nothing. Meaningful once the first actionable warning exists. |
+| Priority weights instead of source order | Source order remains the default and is explicit at the call site. |
+| YAML comment preservation | Likely a `yaml.Node` refactor of the merge layer — see the note below. |
+| **Duplicate step keys inside groups** | `validate.DependsOn` recurses into group steps; `pipeline.Merge`'s duplicate detection does not. A key duplicated between a group member and a top-level step renders cleanly and is rejected by Buildkite on upload. Verified 2026-08-28. |
+| Alias expansion | Unmitigated — see the note below. Rises in importance with item 1. |
+| Flags before the subcommand | `pipefitter generate --log-file=x` works; `pipefitter --log-file=x generate` reports an unknown command. Needs a separate pre-parse pass. |
+| `<command> --help` prints flags twice | pflag writes its own usage on `ErrHelp`, then `commandUsage` writes ours. |
+| CLI framework adoption | See below. |
+| `slog` has no call sites | Configured at warn, nothing logs. Likely picked up as part of item 2, where agent I/O gives warn-level logging its first actionable thing to say. Other candidates: a source resolved from a mutable ref, a values key no template reads. |
+
+### CLI framework adoption
+
+Deliberately not done. The hand-rolled dispatcher is ~70 lines for three flat
+commands, and `google/subcommands` independently arrived at the same
+`Name`/`Description`/`Flags`/`Run` shape, which is reassuring.
+
+Triggers that would change the decision:
+
+| Signal | Why |
+| --- | --- |
+| Nested subcommands | The dispatcher is one level deep by construction |
+| More than about six commands | Usage rendering and flag groups stop being trivial |
+| Wanting shell completions | Never worth hand-writing |
+| Three or more flags shared by every command | Two is a helper function; more is a system |
+
+If it happens, **kong** is the closer fit than cobra: its dependency injection
+would take `Host` directly, where cobra's `*Command`-with-state model works
+against the parameter-not-receiver decision. The migration is contained —
+`Run(ctx, host, args)` bodies are framework-agnostic, and only `cmd.go` plus
+three two-line `Flags` methods mention pflag.
+
+### Notes
 
 **Official schema validation.** `buildkite/pipeline-schema` is official
 (Buildkite's own org) and actively maintained, so consuming it is viable rather
@@ -578,29 +765,6 @@ which carries `HeadComment`/`LineComment`/`FootComment` and round-trips them.
 That is meaningfully more code than map merging, and RFC 7396 is defined over
 plain JSON-ish data. So this is a possible refactor of the merge layer, not a
 cheap template function. Recording it honestly.
-
-**`pipefitter render`.** Validation runs on the *merged* document, by which point
-source attribution is gone — `pipeline.Source` carries a template name but
-`Merge` discards it. So a dangling `depends_on` in a twelve-template pipeline can
-name the step at fault but not the file that declared it.
-
-Threading provenance through `Document` was considered and rejected: it is the
-comment-preservation problem again, making every merge carry attribution it
-mostly does not need.
-
-The gap is addressed instead by letting the user see the document:
-
-```
-pipefitter generate   -> validated document, for uploading
-pipefitter render     -> merged document, no validation, for reading
-```
-
-A separate command rather than `generate --no-validate`, which the CLI surface
-section rules out. That objection stands: fail-closed is what makes
-`generate | buildkite-agent pipeline upload` safe, and an escape hatch on the
-same command is what someone reaches for under deadline pressure — and
-`generate --no-validate` in a checked-in `pipeline.yml` would survive review,
-where `render` piped into `pipeline upload` would not.
 
 **Agent functions.** Design decided ahead of implementation, so the seam is
 right the first time.
