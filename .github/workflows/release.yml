@@ -5,8 +5,16 @@ on:
     tags:
       - 'v*'
 
+# The repository's default workflow token is read-only, so creating a release
+# has to be requested explicitly. Scoped to this job rather than the workflow,
+# and to contents alone — nothing here needs to write anything else.
+permissions:
+  contents: read
+
 jobs:
   release:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
